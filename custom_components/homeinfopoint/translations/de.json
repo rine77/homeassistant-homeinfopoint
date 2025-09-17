@@ -1,0 +1,20 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Home.InfoPoint verbinden",
+        "description": "Bitte URL, Benutzername und Kennwort eingeben. Beispiel-URL: https://homeinfopoint.de/schulname/",
+        "data": {
+          "base_url": "Basis-URL",
+          "username": "Benutzername",
+          "password": "Kennwort"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen.",
+      "invalid_auth": "Anmeldedaten ungültig.",
+      "unknown": "Unbekannter Fehler."
+    }
+  }
+}
