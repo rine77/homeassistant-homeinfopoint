@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect Home.InfoPoint",
+        "title": "Connect Home.InfoPoint ",
         "description": "Enter base URL, username and password. Example: https://homeinfopoint.de/schoolname/",
         "data": {
           "base_url": "Base URL",

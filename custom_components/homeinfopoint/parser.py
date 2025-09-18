@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 from bs4 import BeautifulSoup
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 import re
 
 def _norm(s: str) -> str:
-    return re.sub(r"\s+", " ", s or "").strip()
+    return re.sub(r"\s+", " ", (s or "")).strip()
 
 def _headers(ths) -> List[str]:
     return [_norm(th.get_text()) for th in ths]
 
 def _table_rows(table) -> List[List[str]]:
+    """
+    Liefert alle Zeilen einer Tabelle (inkl. Header).
+    Wichtig: Auch wenn es NUR eine Headerzeile gibt, geben wir diese zurück,
+    damit wir das Fach registrieren können (leere Tabelle).
+    """
     rows: List[List[str]] = []
     for tr in table.find_all("tr"):
         cells = tr.find_all(["td", "th"])
@@ -21,31 +26,28 @@ def _table_rows(table) -> List[List[str]]:
 
 def parse(html: str) -> Dict[str, Any]:
     """
-    Liefert:
+    Ergebnis-Struktur:
     {
       "student": {"name": "...", "klasse": "..."},
-      "grades": { "de": [ { "Datum": "...", "Zensur": "...", ... } ], ...},
+      "grades":  { "de": [ { "Datum": "...", "Zensur": "...", ... } ], ... },  # ggf. leere Listen
       "homework": [ { "Datum": "...", "Fach": "...", "Hausaufgaben": "..." }, ... ],
       "remarks":  [ { "Datum": "...", "Typ": "...", "Stunde": "...", "Bemerkung": "..." }, ... ]
     }
     """
     soup = BeautifulSoup(html, "html.parser")
 
-    # --- Name/Klasse: heuristisch z.B. in Kopf-/Info-Panel suchen ---
+    # --- Name/Klasse heuristisch ---
     name = ""
     klasse = ""
-    # Häufig stehen Name/Klasse in einem <div class="panel-hint"> oder Überschriften/strong
     info_text = " ".join(_norm(x.get_text()) for x in soup.select(".panel-hint, #content h1, #content h2, #content h3"))
-    # Beispiele: "Max Mustermann (Klasse 7b)" oder "Klasse: 7b"
     m = re.search(r"klasse[:\s]+([A-Za-z0-9\-_/]+)", info_text, re.IGNORECASE)
     if m:
         klasse = m.group(1)
-    # Name: nimm die erste Kombination von zwei Wörtern mit Großbuchstaben als Heuristik, falls vorhanden
     n = re.search(r"\b([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)+)\b", info_text)
     if n:
         name = n.group(1)
 
-    # --- Tabellen sammeln ---
+    # --- Tabellen scannen ---
     tables = soup.find_all("table")
     grades_by_subject: Dict[str, List[Dict[str, str]]] = {}
     homework: List[Dict[str, str]] = []
@@ -53,32 +55,36 @@ def parse(html: str) -> Dict[str, Any]:
 
     for table in tables:
         rows = _table_rows(table)
-        if not rows or len(rows) < 2:
+        if not rows:
             continue
-        head = [h.lower() for h in rows[0]]
+        head_raw = rows[0]
+        head = [h.lower() for h in head_raw]
 
-        # Notentabelle je Fach: Datum, Zensur, Bemerkung, Teilnote / Wichtung, Halbjahr
-        if {"datum", "zensur"}.issubset(set(h.replace("teilnote / wichtung", "teilnote / wichtung") for h in head)):
-            # Fach aus Überschrift über der Tabelle erraten (z.B. <h2>Deutsch</h2>)
-            subject = _find_subject_for_table(table)
-            if not subject:
-                subject = "unbekannt"
-            # Baue Dict pro Zeile nach Spaltennamen
-            for r in rows[1:]:
-                entry = _row_to_entry(rows[0], r)
-                grades_by_subject.setdefault(subject_key(subject), []).append(entry)
+        # Noten-Tabellen erkennen an Spalten-Headern
+        # Wir akzeptieren Tabellen auch dann, wenn sie NUR die Headerzeile haben.
+        is_grade_table = "datum" in head and "zensur" in head
+        if is_grade_table:
+            subject = _find_subject_for_table(table) or "unbekannt"
+            key = subject_key(subject)
+            grades_by_subject.setdefault(key, [])  # <-- Fach wird auch ohne Zeilen registriert
+
+            # Datenzeilen (falls vorhanden) ab Zeile 1
+            if len(rows) > 1:
+                for r in rows[1:]:
+                    entry = _row_to_entry(head_raw, r)
+                    grades_by_subject[key].append(entry)
             continue
 
         # Hausaufgaben: Datum, Fach, Hausaufgaben
         if {"datum", "fach", "hausaufgaben"}.issubset(set(head)):
             for r in rows[1:]:
-                homework.append(_row_to_entry(rows[0], r))
+                homework.append(_row_to_entry(head_raw, r))
             continue
 
         # Bemerkungen: Datum, Typ, Stunde, Bemerkung
         if {"datum", "typ", "stunde", "bemerkung"}.issubset(set(head)):
             for r in rows[1:]:
-                remarks.append(_row_to_entry(rows[0], r))
+                remarks.append(_row_to_entry(head_raw, r))
             continue
 
     return {
@@ -89,7 +95,7 @@ def parse(html: str) -> Dict[str, Any]:
     }
 
 def subject_key(subject: str) -> str:
-    """z.B. 'Deutsch' -> 'de', 'Mathematik' -> 'ma' (Heuristik), sonst lower slug."""
+    """z.B. 'Deutsch' -> 'de', 'Mathematik' -> 'ma', sonst schlanker Slug."""
     s = subject.strip().lower()
     mapping = {
         "deutsch": "de",
@@ -109,23 +115,42 @@ def subject_key(subject: str) -> str:
     }
     if s in mapping:
         return mapping[s]
-    # letzte Notlösung: Kürzel aus ersten 2 Buchstaben
-    return re.sub(r"[^a-z0-9]+", "", s)[:3] or "fach"
+    # Fallback: auf 3 Zeichen eingedampft
+    slug = re.sub(r"[^a-z0-9]+", "", s)
+    return (slug[:3] or "fach")
 
 def _find_subject_for_table(table) -> str:
-    # Blick nach oben: nächstes vorheriges H2/H3 strong als Fach
+    """
+    Sucht die Überschrift (h1/h2/h3/strong) oberhalb/um die Tabelle herum,
+    um den Fachnamen zu ermitteln.
+    """
+    # 1) Direkt vorherige Geschwister
     cur = table
-    for _ in range(5):
-        cur = cur.previous_sibling or cur.parent
+    for _ in range(6):
+        cur = getattr(cur, "previous_sibling", None)
         if not cur:
             break
         if getattr(cur, "name", None) in ("h1", "h2", "h3", "strong"):
             txt = _norm(cur.get_text())
             if txt:
                 return txt
+
+    # 2) Elter-Elemente hochlaufen
+    cur = table
+    for _ in range(4):
+        cur = getattr(cur, "parent", None)
+        if not cur:
+            break
+        # Überschrift innerhalb des Eltern-Elements
+        heading = cur.find(["h1", "h2", "h3", "strong"])
+        if heading:
+            txt = _norm(heading.get_text())
+            if txt:
+                return txt
+
     return ""
 
-def _row_to_entry(headers: list[str], values: list[str]) -> Dict[str, str]:
+def _row_to_entry(headers: List[str], values: List[str]) -> Dict[str, str]:
     entry: Dict[str, str] = {}
     for i, h in enumerate(headers):
         key = _norm(h)
