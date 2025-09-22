@@ -6,11 +6,10 @@ CONF_PASSWORD = "password"
 
 DEFAULT_BASE_URL = "https://homeinfopoint.de/salza-gymnasium/"
 
-LOGIN_PATH = "login.php"
-AFTER_LOGIN_PATH = "getdata.php"
-
+# Ablage unter /config/homeinfopoint/<entry_id>/
 STORE_DIR = "homeinfopoint"
 STORE_LAST_HTML = "last.html"
 STORE_LAST_JSON = "last.json"
 
-SCAN_INTERVAL_SECONDS = 6 * 60 * 60  # alle 6h aktualisieren
+# Poll-Intervall des Coordinators
+SCAN_INTERVAL_SECONDS = 1800  # 30 min (bei Bedarf anpassen)

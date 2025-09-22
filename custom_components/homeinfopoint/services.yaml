@@ -1,0 +1,4 @@
+# /config/custom_components/homeinfopoint/services.yaml
+refresh:
+  name: Aktualisieren
+  description: "Aktualisiert alle Home.InfoPoint-Einträge sofort."

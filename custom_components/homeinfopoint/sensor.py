@@ -14,16 +14,17 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 
 
-async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
-) -> None:
-    """Pro Fach genau einen Sensor anlegen (auch wenn noch keine Noten vorhanden sind)."""
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     data_bucket = hass.data[DOMAIN][entry.entry_id]
     coordinator = data_bucket["coordinator"]
 
-    created: Set[str] = set()
     entities: List[SensorEntity] = []
 
+    # NEU: Schüler-Info-Sensor (Name/Klasse)
+    entities.append(HIPStudentInfoSensor(coordinator, entry))
+
+    # Pro Fach je ein Sensor (Durchschnitt 1–6, „-“ ignoriert)
+    created: Set[str] = set()
     grades: Dict[str, List[dict]] = (coordinator.data or {}).get("grades") or {}
     for subject_key in sorted(grades.keys()):
         entities.append(HIPSubjectGradesSensor(coordinator, entry, subject_key))
@@ -31,7 +32,7 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
-    # Später neu erkannte Fächer nachlegen:
+    # Später neu erkannte Fächer dynamisch nachlegen
     @callback
     def _maybe_add_new_subjects() -> None:
         current_grades: Dict[str, List[dict]] = (coordinator.data or {}).get("grades") or {}
@@ -44,19 +45,65 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_maybe_add_new_subjects))
 
 
+# ----------------- Schüler-Info -----------------
+
+class HIPStudentInfoSensor(CoordinatorEntity, SensorEntity):
+    """Sensor mit Name (State) und Klasse (Attribute)."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:account-school"
+
+    def __init__(self, coordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        # Anzeigename stabil halten (State ändert sich bei neuen Daten ohnehin)
+        self._attr_name = "Schüler"
+        self._attr_unique_id = f"{entry.entry_id}-student-info"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=f"Home.InfoPoint ({entry.title})",
+            manufacturer="RHC GmbH",
+            model="Home.InfoPoint",
+        )
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.last_update_success
+
+    @property
+    def native_value(self) -> Any:
+        student = (self.coordinator.data or {}).get("student") or {}
+        name = (student.get("name") or "").strip()
+        # Falls Parser (noch) keinen Namen fand, auf den Entry-Titel fallen
+        return name or self._entry.title
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        student = (self.coordinator.data or {}).get("student") or {}
+        klasse = (student.get("klasse") or "").strip()
+        return {
+            "klasse": klasse,
+            "student_name": (student.get("name") or "").strip(),
+            # ein paar hilfreiche Zusatzinfos:
+            "subject_count": len(((self.coordinator.data or {}).get("grades") or {})),
+            "homework_count": len(((self.coordinator.data or {}).get("homework") or [])),
+            "remarks_count": len(((self.coordinator.data or {}).get("remarks") or [])),
+        }
+
+
+# ----------------- Fach-Sensoren (Durchschnitt) -----------------
+
 class HIPSubjectGradesSensor(CoordinatorEntity, SensorEntity):
-    """Ein Sensor pro Fach. State = Durchschnittsnote (nur 1–6), Attribute = gefilterte Einträge."""
+    """Pro Fach ein Sensor. State = Durchschnitt (nur 1–6), Attribute = Einträge (Datum/Zensur/Bemerkung)."""
 
     _attr_has_entity_name = True
     _attr_icon = "mdi:book-open-variant"
-    _attr_native_unit_of_measurement = None
 
     def __init__(self, coordinator, entry: ConfigEntry, subject_key: str) -> None:
         super().__init__(coordinator)
         self._entry = entry
         self._subject_key = subject_key
 
-        # Anzeigename aus Options-Mapping, sonst Key in Großbuchstaben
         mapping = (entry.options or {}).get("subject_map") or {}
         friendly = mapping.get(subject_key, subject_key.upper())
 
@@ -75,10 +122,6 @@ class HIPSubjectGradesSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self) -> Any:
-        """
-        Durchschnittsnote (arithm. Mittel) nur über valide Ganzzahlen 1–6.
-        Keine gültigen Noten → 0.
-        """
         vals = _numeric_grades_1_to_6(self._entries)
         if not vals:
             return 0
@@ -86,14 +129,6 @@ class HIPSubjectGradesSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """
-        Attribute:
-          - subject_key / subject_name
-          - total_entries (alle Einträge, auch ungültige)
-          - valid_count (nur gezählte 1–6)
-          - last_grade (letzte Zensur – roh)
-          - entries: [{Datum, Zensur, Bemerkung}, ...]
-        """
         raw_entries = self._entries
         entries = [_filter_grade_entry_minimal(e) for e in raw_entries]
         last_grade = next((e.get("Zensur") for e in reversed(entries) if e.get("Zensur")), None)
@@ -118,15 +153,14 @@ class HIPSubjectGradesSensor(CoordinatorEntity, SensorEntity):
 
 # ----------------- Helfer -----------------
 
-_GRADE_INT_RE = re.compile(r"^[1-6]$")  # nur echte Ganzzahlen 1..6
+_GRADE_INT_RE = re.compile(r"^[1-6]$")
 
 def _numeric_grades_1_to_6(entries: List[dict]) -> List[int]:
-    """Extrahiert nur Ganzzahlen 1..6 aus dem Feld 'Zensur' (case-insensitiv)."""
+    """Extrahiert nur Ganzzahlen 1..6 aus 'Zensur'."""
     vals: List[int] = []
     for e in entries:
-        # Case-insensitiv auflösen
-        val = _first_of(e, ["Zensur", "zensur"])
-        s = _norm(val)
+        v = _first_of(e, ["Zensur", "zensur"])
+        s = _norm(v)
         if _GRADE_INT_RE.match(s):
             vals.append(int(s))
     return vals
@@ -141,20 +175,14 @@ def _first_of(d: dict, keys: List[str]) -> str:
     return ""
 
 def _filter_grade_entry_minimal(entry: dict) -> dict:
-    """
-    Schmaler Eintrag nur mit den geforderten Feldern (case-insensitiv):
-    Datum, Zensur, Bemerkung
-    """
-    # Keys case-insensitiv mappen
+    """Auf drei Felder eindampfen: Datum, Zensur, Bemerkung (case-insensitiv, robust)."""
     lower_map = {k.lower(): k for k in entry.keys()}
 
     def get_ci(wanted: str) -> str:
         k = lower_map.get(wanted.lower())
         return _norm(entry.get(k)) if k else ""
 
-    # Fallbacks, falls Seiten-Header variieren (z. B. 'Kommentar' statt 'Bemerkung')
     datum = get_ci("datum")
     zensur = get_ci("zensur")
-    bemerkung = get_ci("bemerkung") or get_ci("kommentar") or get_ci("note")  # defensiv
-
+    bemerkung = get_ci("bemerkung") or get_ci("kommentar") or get_ci("note")
     return {"Datum": datum, "Zensur": zensur, "Bemerkung": bemerkung}

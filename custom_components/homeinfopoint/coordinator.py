@@ -4,41 +4,50 @@ import json
 import logging
 from pathlib import Path
 from datetime import timedelta
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import SCAN_INTERVAL_SECONDS, STORE_DIR, STORE_LAST_JSON
-from .api import HomeInfoPointClient
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
+from .const import STORE_DIR, STORE_LAST_JSON, SCAN_INTERVAL_SECONDS
+from .api import HomeInfoPointClient, InvalidAuth, CannotConnect
+from .parser import parse as parse_html
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class HomeInfoPointCoordinator(DataUpdateCoordinator):
+    """Pollt regelmäßig die Seite, parsed HTML und liefert dict-Daten."""
+
     def __init__(self, hass: HomeAssistant, client: HomeInfoPointClient) -> None:
         super().__init__(
             hass,
             _LOGGER,
-            name="homeinfopoint",
+            name="Home.InfoPoint Coordinator",
             update_interval=timedelta(seconds=SCAN_INTERVAL_SECONDS),
         )
-        self._client = client
+        self.client = client
+        self._entry_folder: Path | None = None  # wird in __init__.py gesetzt (optional)
 
     async def _async_update_data(self):
-        # Seite holen (Login inkl. Fallback ist im Client kapselt)
-        html = await self._client.async_login_and_fetch_html()
-
-        # Parsen (lazy import)
-        from .parser import parse
-        data = parse(html)
-
-        # JSON ohne Import aus __init__.py schreiben → kein Zirkular-Import
         try:
-            path = self.hass.config.path(STORE_DIR, STORE_LAST_JSON)
-            def _write():
-                p = Path(path)
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-            await self.hass.async_add_executor_job(_write)
-        except Exception:  # noqa: BLE001
-            _LOGGER.debug("Konnte last.json nicht schreiben", exc_info=True)
+            html = await self.client.async_fetch_data_html()
+        except InvalidAuth as err:
+            raise UpdateFailed(str(err)) from err
+        except CannotConnect as err:
+            raise UpdateFailed(str(err)) from err
+        except Exception as err:
+            raise UpdateFailed(str(err)) from err
+
+        data = parse_html(html)
+
+        # last.json schreiben (falls Pfad gesetzt)
+        if self._entry_folder:
+            path = self._entry_folder / STORE_LAST_JSON
+            await self.hass.async_add_executor_job(_write_text, path, json.dumps(data, ensure_ascii=False, indent=2))
 
         return data
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")

@@ -1,20 +1,42 @@
 {
+  "title": "Home Info Point",
   "config": {
     "step": {
       "user": {
-        "title": "Home.InfoPoint verbinden",
-        "description": "Bitte URL, Benutzername und Kennwort eingeben. Beispiel-URL: https://homeinfopoint.de/schulname/",
+        "title": "Mit Home.InfoPoint verbinden",
+        "description": "Bitte die Schul-URL, den Benutzernamen und das Kennwort eingeben. Beispiel-URL: https://homeinfopoint.de/schulname/",
         "data": {
           "base_url": "Basis-URL",
           "username": "Benutzername",
           "password": "Kennwort"
         }
+      },
+      "subjects": {
+        "title": "Fächer benennen (und optional WebUntis verknüpfen)",
+        "description": "Vergib sprechende Namen für die erkannten Fächer. Optional kannst du einen WebUntis-Unterrichts-Kalender eintragen und pro Fach Matching-Texte (Regex ODER mit `|`).\n\nHinweis zu Feldnamen: `map_<kürzel>` (z. B. `map_de`) = Anzeigename; `match_<kürzel>` = Titel-Match für WebUntis; `webuntis_lessons_calendar` = Entity-ID deines Unterrichts-Kalenders (z. B. `calendar.meinname_webuntis_calendar`).",
+        "data": {
+          "webuntis_lessons_calendar": "WebUntis Unterrichts-Kalender (Entity-ID)"
+        }
       }
     },
     "error": {
+      "invalid_auth": "Anmeldedaten sind ungültig.",
       "cannot_connect": "Verbindung fehlgeschlagen.",
-      "invalid_auth": "Anmeldedaten ungültig.",
       "unknown": "Unbekannter Fehler."
+    },
+    "abort": {
+      "already_configured": "Dieser Account ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Optionen: Fächer & WebUntis",
+        "description": "Passe Fach-Namen (`map_<kürzel>`), optionale Match-Texte (`match_<kürzel>`) und den WebUntis-Unterrichts-Kalender (`webuntis_lessons_calendar`) an.",
+        "data": {
+          "webuntis_lessons_calendar": "WebUntis Unterrichts-Kalender (Entity-ID)"
+        }
+      }
     }
   }
 }

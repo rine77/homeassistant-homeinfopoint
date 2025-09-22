@@ -1,7 +1,7 @@
 {
   "domain": "homeinfopoint",
   "name": "Home Info Point",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "config_flow": true,
   "iot_class": "cloud_polling",
   "requirements": ["beautifulsoup4==4.12.3"],

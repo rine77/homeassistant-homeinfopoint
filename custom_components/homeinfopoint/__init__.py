@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from homeassistant.core import HomeAssistant
@@ -13,18 +14,27 @@ from .const import (
     CONF_PASSWORD,
     STORE_DIR,
     STORE_LAST_HTML,
+    STORE_LAST_JSON,
 )
 from .api import HomeInfoPointClient, InvalidAuth, CannotConnect
-from .coordinator import HomeInfoPointCoordinator
+from .coordinator import HomeInfoPointCoordinator, _write_text
 
 
 async def async_setup(hass: HomeAssistant, config) -> bool:
-    """YAML-Setup wird nicht genutzt."""
+    """Globale Initialisierung (Services registrieren)."""
+
+    if not hass.services.has_service(DOMAIN, "refresh"):
+        async def _svc_refresh(call):
+            for data in hass.data.get(DOMAIN, {}).values():
+                coord = data.get("coordinator")
+                if coord:
+                    await coord.async_request_refresh()
+        hass.services.async_register(DOMAIN, "refresh", _svc_refresh)
+
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """ConfigEntry laden: einloggen, HTML holen, speichern, Coordinator & Plattformen starten."""
     base_url = entry.data[CONF_BASE_URL]
     username = entry.data[CONF_USERNAME]
     password = entry.data[CONF_PASSWORD]
@@ -38,14 +48,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryAuthFailed from err
     except CannotConnect:
         raise
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:
         raise CannotConnect(str(err)) from err
 
-    # HTML zwischenspeichern
-    await _async_write_text(hass, hass.config.path(STORE_DIR, STORE_LAST_HTML), html)
+    # entry-eigene Ablage /config/homeinfopoint/<entry_id>/last.html
+    entry_folder = Path(hass.config.path(STORE_DIR, entry.entry_id))
+    await hass.async_add_executor_job(_write_text, entry_folder / STORE_LAST_HTML, html)
 
-    # Coordinator starten (erste Aktualisierung sofort)
     coordinator = HomeInfoPointCoordinator(hass, client)
+    coordinator._entry_folder = entry_folder  # Pfad bekannt geben
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
@@ -53,31 +64,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
     }
 
-    # Plattformen laden
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "calendar"])
 
-    # Auf Options-Änderungen reagieren (z. B. Fach-Namen → Sensoren neu benennen)
+    # Bei Optionsänderungen neu laden (z. B. Fachnamen / Kalender-Mapping)
     entry.async_on_unload(entry.add_update_listener(_options_updated))
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Integration entladen."""
+    stored = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    client: HomeInfoPointClient | None = stored.get("client") if stored else None
+
     unloaded = await hass.config_entries.async_unload_platforms(entry, ["sensor", "calendar"])
     hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+
+    if client:
+        await client.async_close()
+
     return unloaded
 
 
 async def _options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Bei Options-Änderungen (subject_map) Eintrag neu laden."""
     await hass.config_entries.async_reload(entry.entry_id)
-
-
-async def _async_write_text(hass: HomeAssistant, path: str, text: str) -> None:
-    """Datei sicher im Executor schreiben."""
-    def _write() -> None:
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text, encoding="utf-8")
-    await hass.async_add_executor_job(_write)

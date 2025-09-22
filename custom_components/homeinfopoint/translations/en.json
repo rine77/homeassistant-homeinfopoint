@@ -1,20 +1,42 @@
 {
+  "title": "Home Info Point",
   "config": {
     "step": {
       "user": {
-        "title": "Connect Home.InfoPoint ",
-        "description": "Enter base URL, username and password. Example: https://homeinfopoint.de/schoolname/",
+        "title": "Connect to Home.InfoPoint",
+        "description": "Enter school URL, username and password. Example URL: https://homeinfopoint.de/schoolname/",
         "data": {
           "base_url": "Base URL",
           "username": "Username",
           "password": "Password"
         }
+      },
+      "subjects": {
+        "title": "Name subjects (and optionally link WebUntis)",
+        "description": "Provide friendly names for detected subjects. Optionally set a WebUntis lessons calendar and per-subject match patterns (regex OR with `|`).\n\nField hints: `map_<key>` (e.g. `map_de`) = display name; `match_<key>` = title match for WebUntis; `webuntis_lessons_calendar` = calendar entity id (e.g. `calendar.myname_webuntis_calendar`).",
+        "data": {
+          "webuntis_lessons_calendar": "WebUntis lessons calendar (entity id)"
+        }
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect.",
       "invalid_auth": "Invalid credentials.",
+      "cannot_connect": "Failed to connect.",
       "unknown": "Unknown error."
+    },
+    "abort": {
+      "already_configured": "This account is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options: Subjects & WebUntis",
+        "description": "Adjust subject display names (`map_<key>`), optional match patterns (`match_<key>`), and the WebUntis lessons calendar (`webuntis_lessons_calendar`).",
+        "data": {
+          "webuntis_lessons_calendar": "WebUntis lessons calendar (entity id)"
+        }
+      }
     }
   }
 }
